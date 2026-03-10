@@ -67,6 +67,23 @@ func TestLexIllegalCharacter(t *testing.T) {
 	}
 }
 
+func TestLexSharpsAndFlatsInTuning(t *testing.T) {
+	src := "tn F# Bb D#\n"
+	tokens, err := Lex(src)
+	if err != nil {
+		t.Fatalf("Lex() returned error: %v", err)
+	}
+
+	got := tokenTypes(tokens)
+	want := []TokenType{TokenIdent, TokenIdent, TokenIdent, TokenIdent, TokenNewline, TokenEOF}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("token type mismatch\n got: %v\nwant: %v", got, want)
+	}
+	if tokens[1].Literal != "F#" || tokens[2].Literal != "Bb" || tokens[3].Literal != "D#" {
+		t.Fatalf("unexpected tuning token literals: %q %q %q", tokens[1].Literal, tokens[2].Literal, tokens[3].Literal)
+	}
+}
+
 func tokenTypes(tokens []Token) []TokenType {
 	out := make([]TokenType, 0, len(tokens))
 	for _, tok := range tokens {

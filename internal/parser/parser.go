@@ -30,6 +30,27 @@ var knownEffectParams = map[string]map[string]struct{}{
 		"r": {},
 		"m": {},
 	},
+	"amp": {
+		"g": {},
+		"t": {},
+		"l": {},
+	},
+	"cab": {
+		"t": {},
+	},
+	"pick": {
+		"p": {},
+		"a": {},
+	},
+	"str": {
+		"d": {},
+	},
+	"body": {
+		"r": {},
+	},
+	"noi": {
+		"l": {},
+	},
 }
 
 var durations = map[string]ast.Duration{
@@ -41,13 +62,19 @@ var durations = map[string]ast.Duration{
 	"t": ast.DurationThirtySecond,
 }
 
-var techniqueKinds = map[string]ast.TechniqueKind{
+var techniqueAliases = map[string]ast.TechniqueKind{
 	"hammer":   ast.TechniqueHammer,
+	"hm":       ast.TechniqueHammer,
 	"pull":     ast.TechniquePull,
+	"pl":       ast.TechniquePull,
 	"slide":    ast.TechniqueSlide,
+	"sl":       ast.TechniqueSlide,
 	"bend":     ast.TechniqueBend,
+	"bd":       ast.TechniqueBend,
 	"vibrato":  ast.TechniqueVibrato,
+	"vb":       ast.TechniqueVibrato,
 	"harmonic": ast.TechniqueHarmonic,
+	"hg":       ast.TechniqueHarmonic,
 }
 
 var techniquesRequireTarget = map[ast.TechniqueKind]struct{}{
@@ -442,7 +469,7 @@ func (p *parser) parseEvent() (ast.Event, error) {
 
 	event := ast.Event{Duration: dur, Kind: ast.EventNote, Note: &note}
 	if isWordToken(p.current().Type) {
-		if _, ok := techniqueKinds[p.current().Literal]; ok {
+		if isTechniqueToken(p.current().Literal) {
 			tech, err := p.parseTechnique()
 			if err != nil {
 				return ast.Event{}, err
@@ -517,11 +544,26 @@ func (p *parser) parseNote() (ast.Note, error) {
 
 func (p *parser) parseTechnique() (ast.Technique, error) {
 	techTok := p.current()
-	kind, ok := techniqueKinds[techTok.Literal]
-	if !ok {
-		return ast.Technique{}, p.errorf(techTok, "unknown technique %q", techTok.Literal)
+	alias := techTok.Literal
+	if !isTechniqueToken(alias) {
+		return ast.Technique{}, p.errorf(techTok, "unknown technique %q", alias)
 	}
 	p.advance()
+
+	usesToKeyword := false
+	hasExplicitTarget := false
+	if isWordToken(p.current().Type) && p.current().Literal == "to" {
+		usesToKeyword = true
+		hasExplicitTarget = true
+		p.advance()
+	} else if p.current().Type == lexer.TokenInt {
+		hasExplicitTarget = true
+	}
+
+	kind, ok := resolveTechniqueAlias(alias, hasExplicitTarget)
+	if !ok {
+		return ast.Technique{}, p.errorf(techTok, "unknown technique %q", alias)
+	}
 
 	tech := ast.Technique{Kind: kind}
 	_, requiresTarget := techniquesRequireTarget[kind]
@@ -539,6 +581,9 @@ func (p *parser) parseTechnique() (ast.Technique, error) {
 		return tech, nil
 	}
 
+	if usesToKeyword {
+		return ast.Technique{}, p.errorf(p.current(), "technique %q does not accept a target fret", kind)
+	}
 	if p.current().Type == lexer.TokenInt || p.current().Type == lexer.TokenFloat {
 		return ast.Technique{}, p.errorf(p.current(), "technique %q does not accept a target fret", kind)
 	}
@@ -629,4 +674,27 @@ func isWordToken(tt lexer.TokenType) bool {
 
 func isValueToken(tt lexer.TokenType) bool {
 	return isWordToken(tt) || tt == lexer.TokenInt || tt == lexer.TokenFloat
+}
+
+func isTechniqueToken(lit string) bool {
+	_, ok := techniqueAliases[lit]
+	return ok
+}
+
+func resolveTechniqueAlias(alias string, hasTarget bool) (ast.TechniqueKind, bool) {
+	kind, ok := techniqueAliases[alias]
+	if !ok {
+		return "", false
+	}
+
+	// "hm" is accepted as both hammer and harmonic:
+	// with a target fret => hammer, otherwise => harmonic.
+	if alias == "hm" {
+		if hasTarget {
+			return ast.TechniqueHammer, true
+		}
+		return ast.TechniqueHarmonic, true
+	}
+
+	return kind, true
 }

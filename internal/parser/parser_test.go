@@ -22,16 +22,16 @@ el {
 Section Main
 
 b 1 {
-    q: s2,5 hammer 7
-    q: s2,7 pull 5
-    q: s2,5 slide 7
-    q: s1,7 bend
+    q: s2,5 hm to 7
+    q: s2,7 pl to 5
+    q: s2,5 sl to 7
+    q: s1,7 bd
 }
 
 b Outro {
     h: [s1,0 s2,0 s3,1 s4,2]
-    q: s1,8 vibrato
-    q: s2,7 harmonic
+    q: s1,8 vb
+    q: s2,7 hm
     q: n
 }
 `
@@ -98,6 +98,9 @@ b Outro {
 	if bar2.Events[0].Kind != ast.EventChord || len(bar2.Events[0].Chord) != 4 {
 		t.Fatalf("unexpected chord event: %+v", bar2.Events[0])
 	}
+	if bar2.Events[2].Technique == nil || bar2.Events[2].Technique.Kind != ast.TechniqueHarmonic {
+		t.Fatalf("expected hm alias to resolve to harmonic, got %+v", bar2.Events[2])
+	}
 	if bar2.Events[3].Kind != ast.EventRest {
 		t.Fatalf("expected rest event, got %+v", bar2.Events[3])
 	}
@@ -128,6 +131,37 @@ b Intro {
 	}
 	if file.Instrument.Tuning.Preset != "std" {
 		t.Fatalf("expected std preset, got %+v", file.Instrument.Tuning)
+	}
+}
+
+func TestParseSupportsSharpsAndFlatsInTuning(t *testing.T) {
+	src := `NAME Accidentals
+
+tp 100
+time 4/4
+
+el {
+    tn F# A C# E G# Bb
+}
+
+Section Main
+b 1 {
+    q: s1,0
+}
+`
+
+	file, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse() returned error: %v", err)
+	}
+	if file.Instrument == nil {
+		t.Fatal("expected instrument")
+	}
+	if len(file.Instrument.Tuning.Strings) != 6 {
+		t.Fatalf("expected 6 tuning strings, got %+v", file.Instrument.Tuning)
+	}
+	if file.Instrument.Tuning.Strings[0] != "F#" || file.Instrument.Tuning.Strings[5] != "Bb" {
+		t.Fatalf("unexpected tuning values: %+v", file.Instrument.Tuning.Strings)
 	}
 }
 
@@ -259,7 +293,7 @@ el {
 
 Section Main
 b 1 {
-    q: s1,2 bend 7
+    q: s1,2 bd 7
 }
 `,
 			want: "does not accept a target fret",

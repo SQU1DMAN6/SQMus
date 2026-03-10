@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,24 +66,51 @@ var canonicalPitchName = map[int]string{
 
 // Score is the compiler IR consumed by output generators.
 type Score struct {
-	Name          string
-	Tempo         int
-	Time          ast.TimeSignature
-	PPQ           int
-	StringNames   [6]string // string 1..6 (high to low)
-	OpenMIDINotes [6]int    // string 1..6 (high to low)
-	Notes         []NoteEvent
-	TotalTicks    int
+	Name           string
+	Tempo          int
+	Time           ast.TimeSignature
+	PPQ            int
+	InstrumentType ast.GuitarType
+	Config         GuitarConfig
+	StringNames    [6]string // string 1..6 (high to low)
+	OpenMIDINotes  [6]int    // string 1..6 (high to low)
+	Notes          []NoteEvent
+	TotalTicks     int
+}
+
+// GuitarConfig stores normalized guitar synth configuration values.
+type GuitarConfig struct {
+	Drive          float64
+	Tone           float64
+	Level          float64
+	Mix            float64
+	DelayTimeMS    float64
+	DelayFeedback  float64
+	DelayMix       float64
+	ReverbRoom     float64
+	ReverbMix      float64
+	ChorusDepth    float64
+	ChorusRate     float64
+	ChorusMix      float64
+	AmpGain        float64
+	CabTone        float64
+	PickupPosition float64
+	StringDamping  float64
+	PickAttack     float64
+	BodyResonance  float64
+	NoiseLevel     float64
 }
 
 // NoteEvent is one resolved musical note in timeline order.
 type NoteEvent struct {
-	StartTicks    int
-	DurationTicks int
-	MIDI          int
-	Velocity      uint8
-	String        int
-	Fret          int
+	StartTicks          int
+	DurationTicks       int
+	MIDI                int
+	Velocity            uint8
+	String              int
+	Fret                int
+	Technique           ast.TechniqueKind
+	TechniqueTargetMIDI int
 }
 
 // CompileSource parses and compiles SQMus source into a score.
@@ -115,19 +143,21 @@ func CompileAST(file *ast.File) (*Score, error) {
 		timeSig = ast.TimeSignature{Beats: 4, Division: 4}
 	}
 
-	stringNames, openMIDINotes, err := resolveInstrumentTuning(file.Instrument)
+	stringNames, openMIDINotes, guitarType, cfg, err := resolveInstrument(file.Instrument)
 	if err != nil {
 		return nil, err
 	}
 
 	score := &Score{
-		Name:          file.Name,
-		Tempo:         tempo,
-		Time:          timeSig,
-		PPQ:           defaultPPQ,
-		StringNames:   stringNames,
-		OpenMIDINotes: openMIDINotes,
-		Notes:         make([]NoteEvent, 0, 64),
+		Name:           file.Name,
+		Tempo:          tempo,
+		Time:           timeSig,
+		PPQ:            defaultPPQ,
+		InstrumentType: guitarType,
+		Config:         cfg,
+		StringNames:    stringNames,
+		OpenMIDINotes:  openMIDINotes,
+		Notes:          make([]NoteEvent, 0, 64),
 	}
 
 	tick := 0
@@ -144,17 +174,26 @@ func CompileAST(file *ast.File) (*Score, error) {
 					// Nothing to emit.
 				case ast.EventChord:
 					for _, note := range event.Chord {
-						noteEvent, err := emitNoteEvent(note, tick, dur, openMIDINotes)
+						noteEvent, err := emitNoteEvent(note, tick, dur, openMIDINotes, nil)
 						if err != nil {
 							return nil, err
 						}
 						score.Notes = append(score.Notes, noteEvent)
 					}
-				case ast.EventNote, ast.EventTechnique:
+				case ast.EventNote:
 					if event.Note == nil {
 						return nil, fmt.Errorf("note event is missing note payload")
 					}
-					noteEvent, err := emitNoteEvent(*event.Note, tick, dur, openMIDINotes)
+					noteEvent, err := emitNoteEvent(*event.Note, tick, dur, openMIDINotes, nil)
+					if err != nil {
+						return nil, err
+					}
+					score.Notes = append(score.Notes, noteEvent)
+				case ast.EventTechnique:
+					if event.Note == nil || event.Technique == nil {
+						return nil, fmt.Errorf("technique event is missing payload")
+					}
+					noteEvent, err := emitNoteEvent(*event.Note, tick, dur, openMIDINotes, event.Technique)
 					if err != nil {
 						return nil, err
 					}
@@ -182,7 +221,7 @@ func CompileAST(file *ast.File) (*Score, error) {
 	return score, nil
 }
 
-func emitNoteEvent(note ast.Note, startTicks, durationTicks int, openMIDINotes [6]int) (NoteEvent, error) {
+func emitNoteEvent(note ast.Note, startTicks, durationTicks int, openMIDINotes [6]int, technique *ast.Technique) (NoteEvent, error) {
 	if note.String < 1 || note.String > 6 {
 		return NoteEvent{}, fmt.Errorf("invalid string number %d", note.String)
 	}
@@ -196,19 +235,62 @@ func emitNoteEvent(note ast.Note, startTicks, durationTicks int, openMIDINotes [
 		return NoteEvent{}, fmt.Errorf("note out of MIDI range: string=%d fret=%d midi=%d", note.String, note.Fret, midi)
 	}
 
+	velocity := uint8(96)
+	techKind := ast.TechniqueKind("")
+	targetMIDI := 0
+
+	if technique != nil {
+		techKind = technique.Kind
+		switch technique.Kind {
+		case ast.TechniqueHammer, ast.TechniquePull, ast.TechniqueSlide:
+			if technique.TargetFret == nil {
+				return NoteEvent{}, fmt.Errorf("technique %q requires target fret", technique.Kind)
+			}
+			targetMIDI = open + *technique.TargetFret
+			if targetMIDI < 0 || targetMIDI > 127 {
+				return NoteEvent{}, fmt.Errorf("technique target out of MIDI range: %d", targetMIDI)
+			}
+			velocity = 90
+		case ast.TechniqueBend:
+			targetMIDI = midi + 2
+			if targetMIDI > 127 {
+				targetMIDI = 127
+			}
+			velocity = 98
+		case ast.TechniqueVibrato:
+			targetMIDI = midi
+			velocity = 95
+		case ast.TechniqueHarmonic:
+			midi += 12
+			if midi > 127 {
+				midi = 127
+			}
+			targetMIDI = midi
+			velocity = 82
+		}
+	}
+
 	return NoteEvent{
-		StartTicks:    startTicks,
-		DurationTicks: durationTicks,
-		MIDI:          midi,
-		Velocity:      96,
-		String:        note.String,
-		Fret:          note.Fret,
+		StartTicks:          startTicks,
+		DurationTicks:       durationTicks,
+		MIDI:                midi,
+		Velocity:            velocity,
+		String:              note.String,
+		Fret:                note.Fret,
+		Technique:           techKind,
+		TechniqueTargetMIDI: targetMIDI,
 	}, nil
 }
 
-func resolveInstrumentTuning(inst *ast.Instrument) ([6]string, [6]int, error) {
+func resolveInstrument(inst *ast.Instrument) ([6]string, [6]int, ast.GuitarType, GuitarConfig, error) {
 	var names [6]string
 	var open [6]int
+
+	guitarType := ast.GuitarElectric
+	if inst != nil && inst.Type != "" {
+		guitarType = inst.Type
+	}
+	cfg := defaultGuitarConfig(guitarType)
 
 	lowToHigh := tuningPresets["std"]
 	if inst != nil {
@@ -217,17 +299,18 @@ func resolveInstrumentTuning(inst *ast.Instrument) ([6]string, [6]int, error) {
 		} else if inst.Tuning.Preset != "" {
 			preset, ok := tuningPresets[inst.Tuning.Preset]
 			if !ok {
-				return names, open, fmt.Errorf("unknown tuning preset %q", inst.Tuning.Preset)
+				return names, open, guitarType, cfg, fmt.Errorf("unknown tuning preset %q", inst.Tuning.Preset)
 			}
 			lowToHigh = preset
 		}
+		applyEffects(&cfg, inst.Effects)
 	}
 
 	defaultOctaves := [6]int{2, 2, 3, 3, 3, 4} // low to high
 	for lowIdx, noteName := range lowToHigh {
 		midi, err := parsePitch(noteName, defaultOctaves[lowIdx])
 		if err != nil {
-			return names, open, fmt.Errorf("invalid tuning note %q: %w", noteName, err)
+			return names, open, guitarType, cfg, fmt.Errorf("invalid tuning note %q: %w", noteName, err)
 		}
 
 		highIdx := 5 - lowIdx
@@ -238,7 +321,164 @@ func resolveInstrumentTuning(inst *ast.Instrument) ([6]string, [6]int, error) {
 	if strings.EqualFold(names[0], "E") {
 		names[0] = "e"
 	}
-	return names, open, nil
+	return names, open, guitarType, cfg, nil
+}
+
+func defaultGuitarConfig(guitarType ast.GuitarType) GuitarConfig {
+	cfg := GuitarConfig{
+		Drive:          0.18,
+		Tone:           0.55,
+		Level:          0.90,
+		Mix:            1.0,
+		DelayTimeMS:    0,
+		DelayFeedback:  0,
+		DelayMix:       0,
+		ReverbRoom:     0.15,
+		ReverbMix:      0.10,
+		ChorusDepth:    0,
+		ChorusRate:     0,
+		ChorusMix:      0,
+		AmpGain:        0.65,
+		CabTone:        0.55,
+		PickupPosition: 0.62,
+		StringDamping:  0.30,
+		PickAttack:     0.45,
+		BodyResonance:  0.35,
+		NoiseLevel:     0.012,
+	}
+
+	switch guitarType {
+	case ast.GuitarAcoustic:
+		cfg.Drive = 0.05
+		cfg.Tone = 0.62
+		cfg.AmpGain = 0.35
+		cfg.PickupPosition = 0.48
+		cfg.StringDamping = 0.24
+		cfg.PickAttack = 0.52
+		cfg.BodyResonance = 0.70
+		cfg.NoiseLevel = 0.020
+	case ast.GuitarClassical:
+		cfg.Drive = 0.0
+		cfg.Tone = 0.58
+		cfg.AmpGain = 0.28
+		cfg.PickupPosition = 0.42
+		cfg.StringDamping = 0.20
+		cfg.PickAttack = 0.32
+		cfg.BodyResonance = 0.78
+		cfg.NoiseLevel = 0.018
+	}
+	return cfg
+}
+
+func applyEffects(cfg *GuitarConfig, effects []ast.Effect) {
+	for _, effect := range effects {
+		params := map[string]float64{}
+		for _, param := range effect.Params {
+			params[param.Key] = param.Value
+		}
+
+		switch effect.Name {
+		case "drv":
+			if v, ok := params["g"]; ok {
+				cfg.Drive = clamp01(v)
+			}
+			if v, ok := params["t"]; ok {
+				cfg.Tone = clamp01(v)
+			}
+			if v, ok := params["l"]; ok {
+				cfg.Level = clamp01(v)
+			}
+			if v, ok := params["m"]; ok {
+				cfg.Mix = clamp01(v)
+			}
+		case "dly":
+			if v, ok := params["t"]; ok {
+				cfg.DelayTimeMS = clamp(v, 0, 2000)
+			}
+			if v, ok := params["f"]; ok {
+				cfg.DelayFeedback = clamp01(v)
+			}
+			if v, ok := params["m"]; ok {
+				cfg.DelayMix = clamp01(v)
+			}
+		case "rev":
+			if v, ok := params["r"]; ok {
+				cfg.ReverbRoom = clamp01(v)
+			}
+			if v, ok := params["m"]; ok {
+				cfg.ReverbMix = clamp01(v)
+			}
+		case "cho":
+			if v, ok := params["d"]; ok {
+				cfg.ChorusDepth = clamp01(v)
+			}
+			if v, ok := params["r"]; ok {
+				cfg.ChorusRate = clamp(v, 0, 8)
+			}
+			if v, ok := params["m"]; ok {
+				cfg.ChorusMix = clamp01(v)
+			}
+		case "amp":
+			if v, ok := params["g"]; ok {
+				cfg.AmpGain = clamp01(v)
+			}
+			if v, ok := params["t"]; ok {
+				cfg.CabTone = clamp01(v)
+			}
+			if v, ok := params["l"]; ok {
+				cfg.Level = clamp01(v)
+			}
+		case "cab":
+			if v, ok := params["t"]; ok {
+				cfg.CabTone = clamp01(v)
+			}
+		case "pick":
+			if v, ok := params["p"]; ok {
+				cfg.PickupPosition = clamp01(v)
+			}
+			if v, ok := params["a"]; ok {
+				cfg.PickAttack = clamp01(v)
+			}
+		case "str":
+			if v, ok := params["d"]; ok {
+				cfg.StringDamping = clamp01(v)
+			}
+		case "body":
+			if v, ok := params["r"]; ok {
+				cfg.BodyResonance = clamp01(v)
+			}
+		case "noi":
+			if v, ok := params["l"]; ok {
+				cfg.NoiseLevel = clamp01(v)
+			}
+		}
+	}
+}
+
+func clamp01(v float64) float64 {
+	if math.IsNaN(v) {
+		return 0
+	}
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func clamp(v, lo, hi float64) float64 {
+	if math.IsNaN(v) {
+		return lo
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func parsePitch(raw string, defaultOctave int) (int, error) {

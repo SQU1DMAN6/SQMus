@@ -32,6 +32,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runTab(args[1:], stdout, stderr)
 	case "midi":
 		return runMIDI(args[1:], stdout, stderr)
+	case "png", "tabpng":
+		return runTabPNG(args[1:], stdout, stderr)
 	case "wav":
 		return runWAV(args[1:], stdout, stderr)
 	case "play":
@@ -181,6 +183,39 @@ func runWAV(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runTabPNG(args []string, stdout, stderr io.Writer) int {
+	args = normalizeFlagOrder(args)
+	fs := newFlagSet("png")
+	outPath := fs.String("o", "", "Output PNG path (default: <input>.tab.png)")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+
+	input, err := oneArg(fs.Args(), "png")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+
+	score, err := loadScore(input)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	output := *outPath
+	if output == "" {
+		output = replaceExt(input, ".tab.png")
+	}
+	if err := tab.GeneratePNG(score, output); err != nil {
+		fmt.Fprintf(stderr, "write PNG: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Wrote PNG tab to %s\n", output)
+	return 0
+}
+
 func runPlay(args []string, stdout, stderr io.Writer) int {
 	args = normalizeFlagOrder(args)
 	fs := newFlagSet("play")
@@ -242,6 +277,7 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	}
 
 	tabOut := filepath.Join(*outDir, base+".tab.txt")
+	pngOut := filepath.Join(*outDir, base+".tab.png")
 	midiOut := filepath.Join(*outDir, base+".mid")
 	wavOut := filepath.Join(*outDir, base+".wav")
 
@@ -254,6 +290,10 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "write tab output: %v\n", err)
 		return 1
 	}
+	if err := tab.WritePNGFromASCII(asciiTab, pngOut); err != nil {
+		fmt.Fprintf(stderr, "write PNG tab output: %v\n", err)
+		return 1
+	}
 	if err := midi.WriteFile(score, midiOut); err != nil {
 		fmt.Fprintf(stderr, "write MIDI: %v\n", err)
 		return 1
@@ -264,6 +304,7 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintf(stdout, "Wrote tab : %s\n", tabOut)
+	fmt.Fprintf(stdout, "Wrote png : %s\n", pngOut)
 	fmt.Fprintf(stdout, "Wrote midi: %s\n", midiOut)
 	fmt.Fprintf(stdout, "Wrote wav : %s\n", wavOut)
 	return 0
@@ -331,6 +372,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  sqmus compile <song.sqm>")
 	fmt.Fprintln(w, "  sqmus tab <song.sqm> [-o output.txt]")
+	fmt.Fprintln(w, "  sqmus png <song.sqm> [-o output.png]")
 	fmt.Fprintln(w, "  sqmus midi <song.sqm> [-o output.mid]")
 	fmt.Fprintln(w, "  sqmus wav <song.sqm> [-o output.wav]")
 	fmt.Fprintln(w, "  sqmus play <song.sqm>")

@@ -171,5 +171,5 @@ func isIdentStart(ch byte) bool {
 }
 
 func isIdentPart(ch byte) bool {
-	return isIdentStart(ch) || isDigit(ch)
+	return isIdentStart(ch) || isDigit(ch) || ch == '#'
 }

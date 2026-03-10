@@ -38,4 +38,14 @@ func TestRenderWAV(t *testing.T) {
 	if !bytes.Equal(data[8:12], []byte("WAVE")) {
 		t.Fatalf("missing WAVE header")
 	}
+	nonZero := false
+	for _, b := range data[44:] {
+		if b != 0 {
+			nonZero = true
+			break
+		}
+	}
+	if !nonZero {
+		t.Fatalf("audio payload is unexpectedly silent")
+	}
 }

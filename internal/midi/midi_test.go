@@ -33,6 +33,12 @@ func TestEncodeAndWriteFile(t *testing.T) {
 	if !bytes.Contains(data, []byte("MTrk")) {
 		t.Fatalf("missing MTrk chunk")
 	}
+	if !bytes.Contains(data, []byte{0xE0}) {
+		t.Fatalf("expected pitch-bend events for techniques")
+	}
+	if !bytes.Contains(data, []byte{0xB0, 101, 0}) {
+		t.Fatalf("expected pitch-bend range configuration events")
+	}
 
 	outPath := filepath.Join(t.TempDir(), "test.mid")
 	if err := WriteFile(score, outPath); err != nil {

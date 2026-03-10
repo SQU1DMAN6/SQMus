@@ -1,32 +1,30 @@
-NAME Simple Test
+NAME Technique Test Bed
 
-tp 184
+tp 132
 time 4/4
 
-el {
-    tn std
-    drv g 0.6 t 0.5 l 0.9
-    rev r 0.3
+ac {
+    tn  D A D B G E
+
 }
 
 Section Main
 
 b 1 {
-    q: s2,0
-    q: s2,2
+    q: s2,5
     q: s2,3
-    q: n
+    q: s2,5
+    q: s2,7 bd
 }
 
 b 2 {
-    e: s1,3
-    e: s1,5
+    e: s1,7
+    e: s1,8
     q: s2,5
-    q: s3,2
-    h: s1,2
+    q: n
 }
 
 b End {
-    h: s1,0
-    h: s2,4
+    h: s1,12
+    h: [s1,0 s2,0 s3,1 s4,2]
 }
