@@ -34,6 +34,7 @@ func GenerateASCII(score *compiler.Score) (string, error) {
 		}
 	}
 
+	barUnits := barLengthUnits(score, unitTicks)
 	for _, note := range score.Notes {
 		if note.String < 1 || note.String > 6 {
 			continue
@@ -43,6 +44,9 @@ func GenerateASCII(score *compiler.Score) (string, error) {
 		if pos < 0 {
 			pos = 0
 		}
+		if barUnits > 0 && pos%barUnits == 0 {
+			pos++
+		}
 
 		fret := strconv.Itoa(note.Fret)
 		ensureLineWidth(lines, pos+len(fret)+1)
@@ -51,7 +55,6 @@ func GenerateASCII(score *compiler.Score) (string, error) {
 		}
 	}
 
-	barUnits := barLengthUnits(score, unitTicks)
 	if barUnits > 0 {
 		for i := range lines {
 			for pos := barUnits; pos < len(lines[i]); pos += barUnits {

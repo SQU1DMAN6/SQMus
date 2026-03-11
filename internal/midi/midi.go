@@ -18,6 +18,9 @@ const (
 	statusCC      = 0xB0
 	statusPitch   = 0xE0
 
+	statusDrumNoteOn  = 0x99 // channel 10
+	statusDrumNoteOff = 0x89
+
 	pitchRangeSemitones = 2.0
 )
 
@@ -39,7 +42,7 @@ func Encode(score *compiler.Score) ([]byte, error) {
 		return nil, fmt.Errorf("invalid tempo: %d", score.Tempo)
 	}
 
-	events := make([]timedEvent, 0, len(score.Notes)*8+12)
+	events := make([]timedEvent, 0, len(score.Notes)*8+len(score.Drums)*4+16)
 	events = append(events, tempoEvent(score.Tempo))
 	events = append(events, timeSignatureEvent(score.Time.Beats, score.Time.Division))
 	events = append(events, pitchBendRangeEvents()...)
@@ -62,6 +65,24 @@ func Encode(score *compiler.Score) ([]byte, error) {
 		)
 
 		events = append(events, techniquePitchEvents(note)...)
+	}
+
+	for _, hit := range score.Drums {
+		note, ok := drumMIDINote(hit.Kind, hit.Style)
+		if !ok {
+			continue
+		}
+		if hit.DurationTicks <= 0 {
+			continue
+		}
+
+		start := hit.StartTicks
+		end := hit.StartTicks + hit.DurationTicks
+		vel := noteVelocity(hit.Velocity)
+		events = append(events,
+			timedEvent{tick: start, priority: 6, payload: []byte{statusDrumNoteOn, note, vel}},
+			timedEvent{tick: end, priority: 7, payload: []byte{statusDrumNoteOff, note, 0}},
+		)
 	}
 
 	sort.Slice(events, func(i, j int) bool {
@@ -194,6 +215,41 @@ func linearBendEvents(start, end int, fromMIDI, toMIDI, transitionPortion float6
 		events = append(events, pitchBendEvent(start+transitionTicks, toMIDI-fromMIDI, 2))
 	}
 	return events
+}
+
+func drumMIDINote(kind ast.DrumKind, style ast.DrumStyle) (byte, bool) {
+	switch kind {
+	case ast.DrumKick:
+		return 36, true
+	case ast.DrumSnare:
+		if style == ast.DrumStyleRim {
+			return 37, true
+		}
+		return 38, true
+	case ast.DrumHiHat:
+		if style == ast.DrumStyleOpen {
+			return 46, true
+		}
+		return 42, true
+	case ast.DrumRide:
+		return 51, true
+	case ast.DrumCrash:
+		return 49, true
+	case ast.DrumTom1:
+		return 50, true
+	case ast.DrumTom2:
+		return 47, true
+	case ast.DrumTom3:
+		return 45, true
+	case ast.DrumClap:
+		return 39, true
+	case ast.DrumCowbell:
+		return 56, true
+	case ast.DrumPerc:
+		return 60, true
+	default:
+		return 0, false
+	}
 }
 
 func pitchBendRangeEvents() []timedEvent {

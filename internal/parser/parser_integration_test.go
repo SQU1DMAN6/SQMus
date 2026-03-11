@@ -30,18 +30,21 @@ func TestParseExampleHelloSQM(t *testing.T) {
 	if file.Instrument == nil {
 		t.Fatal("instrument was not parsed")
 	}
+	if file.Drums == nil {
+		t.Fatal("drum block was not parsed")
+	}
 	if len(file.Sections) != 1 {
 		t.Fatalf("expected 1 section, got %d", len(file.Sections))
 	}
-	if len(file.Sections[0].Bars) != 3 {
-		t.Fatalf("expected 3 bars, got %d", len(file.Sections[0].Bars))
+	if len(file.Sections[0].Bars) != 4 {
+		t.Fatalf("expected 4 bars, got %d", len(file.Sections[0].Bars))
 	}
 
 	eventCount := 0
 	for _, bar := range file.Sections[0].Bars {
 		eventCount += len(bar.Events)
 	}
-	if eventCount != 10 {
-		t.Fatalf("expected 10 events across all bars, got %d", eventCount)
+	if eventCount != 14 {
+		t.Fatalf("expected 14 events across all bars, got %d", eventCount)
 	}
 }

@@ -30,7 +30,7 @@ func TestCLICompileAndExport(t *testing.T) {
 		t.Fatalf("export command failed with code %d, stderr=%s", code, stderr.String())
 	}
 
-	for _, name := range []string{"hello.tab.txt", "hello.tab.png", "hello.mid", "hello.wav"} {
+	for _, name := range []string{"hello.png", "hello.mid", "hello.wav"} {
 		path := filepath.Join(outDir, name)
 		st, err := os.Stat(path)
 		if err != nil {
@@ -39,26 +39,6 @@ func TestCLICompileAndExport(t *testing.T) {
 		if st.Size() == 0 {
 			t.Fatalf("output file is empty: %s", path)
 		}
-	}
-}
-
-func TestCLIPNGCommand(t *testing.T) {
-	input := filepath.Join("..", "..", "examples", "hello.sqm")
-	output := filepath.Join(t.TempDir(), "hello.png")
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	code := run([]string{"png", input, "-o", output}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("png command failed with code %d, stderr=%s", code, stderr.String())
-	}
-
-	st, err := os.Stat(output)
-	if err != nil {
-		t.Fatalf("expected png file %s: %v", output, err)
-	}
-	if st.Size() == 0 {
-		t.Fatalf("png output file is empty: %s", output)
 	}
 }
 

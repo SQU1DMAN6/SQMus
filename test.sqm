@@ -3,28 +3,47 @@ NAME Technique Test Bed
 tp 132
 time 4/4
 
-ac {
-    tn  D A D B G E
+el {
+    tn std
+    drv g 0.62 t 0.58 l 0.92 m 0.95
+    amp g 0.78 t 0.66 l 0.94
+    pick p 0.70 a 0.62
+    str d 0.20
+    body r 0.30
+    cho d 0.16 r 1.1 m 0.20
+    dly t 240 f 0.28 m 0.16
+    rev r 0.24 m 0.14
+}
 
+dr {
+    kit rock
+    lvl 0.9
 }
 
 Section Main
 
 b 1 {
-    q: s2,5
-    q: s2,3
-    q: s2,5
-    q: s2,7 bd
+    q: s2,3 hammer 5
+    q: s2,5 pull 3
+    q aug: s2,3 slide 7
+    q: s2,7 bend
 }
 
 b 2 {
-    e: s1,7
-    e: s1,8
+    e: s1,7 vibrato
+    e: s1,7 bend
     q: s2,5
     q: n
 }
 
 b End {
-    h: s1,12
+    h: s1,12 harmonic
     h: [s1,0 s2,0 s3,1 s4,2]
+}
+
+b Drums {
+    q: dk
+    q: ds,r
+    q: dhh,o
+    q: [dk ds]
 }

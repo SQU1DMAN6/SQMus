@@ -9,7 +9,7 @@ import (
 	"sqmus/internal/compiler"
 )
 
-func TestGeneratePNG(t *testing.T) {
+func TestWritePNG(t *testing.T) {
 	srcPath := filepath.Join("..", "..", "examples", "hello.sqm")
 	src, err := os.ReadFile(srcPath)
 	if err != nil {
@@ -21,8 +21,8 @@ func TestGeneratePNG(t *testing.T) {
 	}
 
 	outPath := filepath.Join(t.TempDir(), "hello.tab.png")
-	if err := GeneratePNG(score, outPath); err != nil {
-		t.Fatalf("GeneratePNG() returned error: %v", err)
+	if err := WritePNG(score, outPath); err != nil {
+		t.Fatalf("WritePNG() returned error: %v", err)
 	}
 
 	data, err := os.ReadFile(outPath)

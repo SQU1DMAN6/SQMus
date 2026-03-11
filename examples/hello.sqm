@@ -14,23 +14,35 @@ el {
     rev r 0.26 m 0.15
 }
 
+dr {
+    kit std
+    lvl 0.85
+}
+
 Section Main
 
 b 1 {
     q: s2,0
     q: s2,2
-    q: s2,3 hm to 5
+    q aug: s2,3 hammer 5
     q: n
 }
 
 b 2 {
     e: s1,3
-    e: s1,5 sl to 7
-    q: s2,5 bd
+    e: s1,5 slide 7
+    q: s2,5 bend
     q: s3,2
 }
 
 b End {
-    h: s1,7 vb
-    h: s1,0 hm
+    h: s1,7 vibrato
+    h: s1,0 harmonic
+}
+
+b Drums {
+    q: dk
+    q: ds
+    q: dhh,c
+    q: ds
 }

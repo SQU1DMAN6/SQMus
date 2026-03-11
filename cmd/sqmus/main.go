@@ -13,6 +13,7 @@ import (
 	"sqmus/internal/compiler"
 	"sqmus/internal/midi"
 	"sqmus/internal/tab"
+	"sqmus/internal/vst"
 )
 
 func main() {
@@ -30,10 +31,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCompile(args[1:], stdout, stderr)
 	case "tab":
 		return runTab(args[1:], stdout, stderr)
+	case "tabtxt":
+		return runTabTxt(args[1:], stdout, stderr)
 	case "midi":
 		return runMIDI(args[1:], stdout, stderr)
-	case "png", "tabpng":
-		return runTabPNG(args[1:], stdout, stderr)
 	case "wav":
 		return runWAV(args[1:], stdout, stderr)
 	case "play":
@@ -73,6 +74,7 @@ func runCompile(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Tempo: %d BPM\n", score.Tempo)
 	fmt.Fprintf(stdout, "Time : %d/%d\n", score.Time.Beats, score.Time.Division)
 	fmt.Fprintf(stdout, "Notes: %d\n", len(score.Notes))
+	fmt.Fprintf(stdout, "Drums: %d\n", len(score.Drums))
 	fmt.Fprintf(stdout, "Ticks: %d\n", score.TotalTicks)
 	return 0
 }
@@ -80,13 +82,46 @@ func runCompile(args []string, stdout, stderr io.Writer) int {
 func runTab(args []string, stdout, stderr io.Writer) int {
 	args = normalizeFlagOrder(args)
 	fs := newFlagSet("tab")
-	outPath := fs.String("o", "", "Output file path (default: stdout)")
+	outPath := fs.String("o", "", "Output PNG path (default: <input>.png)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
 
 	input, err := oneArg(fs.Args(), "tab")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+
+	score, err := loadScore(input)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	output := *outPath
+	if output == "" {
+		output = replaceExt(input, ".png")
+	}
+	if err := tab.WritePNG(score, output); err != nil {
+		fmt.Fprintf(stderr, "write PNG tab: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Wrote PNG tab to %s\n", output)
+	return 0
+}
+
+func runTabTxt(args []string, stdout, stderr io.Writer) int {
+	args = normalizeFlagOrder(args)
+	fs := newFlagSet("tabtxt")
+	outPath := fs.String("o", "", "Output file path (default: stdout)")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+
+	input, err := oneArg(fs.Args(), "tabtxt")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -113,7 +148,7 @@ func runTab(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "write tab output: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Wrote tab to %s\n", *outPath)
+	fmt.Fprintf(stdout, "Wrote ASCII tab to %s\n", *outPath)
 	return 0
 }
 
@@ -154,6 +189,7 @@ func runWAV(args []string, stdout, stderr io.Writer) int {
 	args = normalizeFlagOrder(args)
 	fs := newFlagSet("wav")
 	outPath := fs.String("o", "", "Output WAV path (default: <input>.wav)")
+	vstFlags := addVSTFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -175,7 +211,12 @@ func runWAV(args []string, stdout, stderr io.Writer) int {
 	if output == "" {
 		output = replaceExt(input, ".wav")
 	}
-	if err := audio.RenderWAV(score, output); err != nil {
+	if vstFlags.enabled() {
+		if err := vst.RenderWAV(score, vstFlags.options(), output); err != nil {
+			fmt.Fprintf(stderr, "write WAV via VST: %v\n", err)
+			return 1
+		}
+	} else if err := audio.RenderWAV(score, output); err != nil {
 		fmt.Fprintf(stderr, "write WAV: %v\n", err)
 		return 1
 	}
@@ -183,42 +224,10 @@ func runWAV(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runTabPNG(args []string, stdout, stderr io.Writer) int {
-	args = normalizeFlagOrder(args)
-	fs := newFlagSet("png")
-	outPath := fs.String("o", "", "Output PNG path (default: <input>.tab.png)")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
-
-	input, err := oneArg(fs.Args(), "png")
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
-
-	score, err := loadScore(input)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-
-	output := *outPath
-	if output == "" {
-		output = replaceExt(input, ".tab.png")
-	}
-	if err := tab.GeneratePNG(score, output); err != nil {
-		fmt.Fprintf(stderr, "write PNG: %v\n", err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "Wrote PNG tab to %s\n", output)
-	return 0
-}
-
 func runPlay(args []string, stdout, stderr io.Writer) int {
 	args = normalizeFlagOrder(args)
 	fs := newFlagSet("play")
+	vstFlags := addVSTFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -237,7 +246,12 @@ func runPlay(args []string, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintln(stdout, "Rendering and playing...")
-	if err := audio.Play(score); err != nil {
+	if vstFlags.enabled() {
+		if err := vst.Play(score, vstFlags.options()); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	} else if err := audio.Play(score); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -249,6 +263,7 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("export")
 	outDir := fs.String("dir", ".", "Output directory for all exports")
 	prefix := fs.String("name", "", "Override output basename")
+	vstFlags := addVSTFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -276,35 +291,29 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	tabOut := filepath.Join(*outDir, base+".tab.txt")
-	pngOut := filepath.Join(*outDir, base+".tab.png")
+	pngOut := filepath.Join(*outDir, base+".png")
 	midiOut := filepath.Join(*outDir, base+".mid")
 	wavOut := filepath.Join(*outDir, base+".wav")
 
-	asciiTab, err := tab.GenerateASCII(score)
-	if err != nil {
+	if err := tab.WritePNG(score, pngOut); err != nil {
 		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if err := os.WriteFile(tabOut, []byte(asciiTab), 0o644); err != nil {
-		fmt.Fprintf(stderr, "write tab output: %v\n", err)
-		return 1
-	}
-	if err := tab.WritePNGFromASCII(asciiTab, pngOut); err != nil {
-		fmt.Fprintf(stderr, "write PNG tab output: %v\n", err)
 		return 1
 	}
 	if err := midi.WriteFile(score, midiOut); err != nil {
 		fmt.Fprintf(stderr, "write MIDI: %v\n", err)
 		return 1
 	}
-	if err := audio.RenderWAV(score, wavOut); err != nil {
+	if vstFlags.enabled() {
+		if err := vst.RenderWAV(score, vstFlags.options(), wavOut); err != nil {
+			fmt.Fprintf(stderr, "write WAV via VST: %v\n", err)
+			return 1
+		}
+	} else if err := audio.RenderWAV(score, wavOut); err != nil {
 		fmt.Fprintf(stderr, "write WAV: %v\n", err)
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "Wrote tab : %s\n", tabOut)
-	fmt.Fprintf(stdout, "Wrote png : %s\n", pngOut)
+	fmt.Fprintf(stdout, "Wrote tab : %s\n", pngOut)
 	fmt.Fprintf(stdout, "Wrote midi: %s\n", midiOut)
 	fmt.Fprintf(stdout, "Wrote wav : %s\n", wavOut)
 	return 0
@@ -366,13 +375,45 @@ func newFlagSet(name string) *flag.FlagSet {
 	return fs
 }
 
+type vstFlagSet struct {
+	plugin     *string
+	preset     *string
+	sampleRate *int
+	bufferSize *int
+}
+
+func addVSTFlags(fs *flag.FlagSet) *vstFlagSet {
+	return &vstFlagSet{
+		plugin:     fs.String("vst", "", "Path to VST plugin (enables VST rendering)"),
+		preset:     fs.String("vst-preset", "", "Optional VST preset/program path"),
+		sampleRate: fs.Int("vst-rate", 44100, "VST sample rate"),
+		bufferSize: fs.Int("vst-buffer", 512, "VST buffer size"),
+	}
+}
+
+func (v *vstFlagSet) enabled() bool {
+	return v != nil && v.plugin != nil && strings.TrimSpace(*v.plugin) != ""
+}
+
+func (v *vstFlagSet) options() vst.Options {
+	if v == nil {
+		return vst.Options{}
+	}
+	return vst.Options{
+		PluginPath: strings.TrimSpace(*v.plugin),
+		PresetPath: strings.TrimSpace(*v.preset),
+		SampleRate: *v.sampleRate,
+		BufferSize: *v.bufferSize,
+	}
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "SQMus CLI")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  sqmus compile <song.sqm>")
-	fmt.Fprintln(w, "  sqmus tab <song.sqm> [-o output.txt]")
-	fmt.Fprintln(w, "  sqmus png <song.sqm> [-o output.png]")
+	fmt.Fprintln(w, "  sqmus tab <song.sqm> [-o output.png]")
+	fmt.Fprintln(w, "  sqmus tabtxt <song.sqm> [-o output.txt]")
 	fmt.Fprintln(w, "  sqmus midi <song.sqm> [-o output.mid]")
 	fmt.Fprintln(w, "  sqmus wav <song.sqm> [-o output.wav]")
 	fmt.Fprintln(w, "  sqmus play <song.sqm>")

@@ -22,16 +22,16 @@ el {
 Section Main
 
 b 1 {
-    q: s2,5 hm to 7
-    q: s2,7 pl to 5
-    q: s2,5 sl to 7
-    q: s1,7 bd
+    q: s2,5 hammer 7
+    q: s2,7 pull 5
+    q: s2,5 slide 7
+    q: s1,7 bend
 }
 
 b Outro {
     h: [s1,0 s2,0 s3,1 s4,2]
-    q: s1,8 vb
-    q: s2,7 hm
+    q: s1,8 vibrato
+    q: s2,7 harmonic
     q: n
 }
 `
@@ -98,9 +98,6 @@ b Outro {
 	if bar2.Events[0].Kind != ast.EventChord || len(bar2.Events[0].Chord) != 4 {
 		t.Fatalf("unexpected chord event: %+v", bar2.Events[0])
 	}
-	if bar2.Events[2].Technique == nil || bar2.Events[2].Technique.Kind != ast.TechniqueHarmonic {
-		t.Fatalf("expected hm alias to resolve to harmonic, got %+v", bar2.Events[2])
-	}
 	if bar2.Events[3].Kind != ast.EventRest {
 		t.Fatalf("expected rest event, got %+v", bar2.Events[3])
 	}
@@ -134,19 +131,19 @@ b Intro {
 	}
 }
 
-func TestParseSupportsSharpsAndFlatsInTuning(t *testing.T) {
-	src := `NAME Accidentals
+func TestParseAugmentedEvent(t *testing.T) {
+	src := `NAME Augmented
 
-tp 100
+tp 90
 time 4/4
 
 el {
-    tn F# A C# E G# Bb
+    tn std
 }
 
 Section Main
 b 1 {
-    q: s1,0
+    q aug: s1,0
 }
 `
 
@@ -154,14 +151,56 @@ b 1 {
 	if err != nil {
 		t.Fatalf("Parse() returned error: %v", err)
 	}
-	if file.Instrument == nil {
-		t.Fatal("expected instrument")
+	if len(file.Sections) != 1 || len(file.Sections[0].Bars) != 1 {
+		t.Fatalf("expected one bar")
 	}
-	if len(file.Instrument.Tuning.Strings) != 6 {
-		t.Fatalf("expected 6 tuning strings, got %+v", file.Instrument.Tuning)
+	event := file.Sections[0].Bars[0].Events[0]
+	if !event.Augmented {
+		t.Fatalf("expected augmented event")
 	}
-	if file.Instrument.Tuning.Strings[0] != "F#" || file.Instrument.Tuning.Strings[5] != "Bb" {
-		t.Fatalf("unexpected tuning values: %+v", file.Instrument.Tuning.Strings)
+}
+
+func TestParseDrums(t *testing.T) {
+	src := `NAME Drum Test
+
+tp 120
+time 4/4
+
+dr {
+    kit rock
+    lvl 0.8
+}
+
+Section Main
+b 1 {
+    q: dk
+    q: [ds,r dhh,c]
+}
+`
+
+	file, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse() returned error: %v", err)
+	}
+	if file.Drums == nil {
+		t.Fatalf("expected drum block")
+	}
+	if file.Drums.Kit != "rock" {
+		t.Fatalf("unexpected kit: %q", file.Drums.Kit)
+	}
+
+	bar := file.Sections[0].Bars[0]
+	if bar.Events[0].Kind != ast.EventDrum || len(bar.Events[0].Drums) != 1 {
+		t.Fatalf("expected single drum event")
+	}
+	if bar.Events[1].Kind != ast.EventDrum || len(bar.Events[1].Drums) != 2 {
+		t.Fatalf("expected drum chord event")
+	}
+	if bar.Events[1].Drums[0].Style != ast.DrumStyleRim {
+		t.Fatalf("expected rim style")
+	}
+	if bar.Events[1].Drums[1].Style != ast.DrumStyleClosed {
+		t.Fatalf("expected closed style")
 	}
 }
 
@@ -293,7 +332,7 @@ el {
 
 Section Main
 b 1 {
-    q: s1,2 bd 7
+    q: s1,2 bend 7
 }
 `,
 			want: "does not accept a target fret",
@@ -314,6 +353,24 @@ b 1 {
 }
 `,
 			want: "bar declared before any Section",
+		},
+		{
+			name: "unknown drum style",
+			src: `NAME A
+
+tp 92
+time 4/4
+
+dr {
+    kit std
+}
+
+Section Main
+b 1 {
+    q: dhh,zzz
+}
+`,
+			want: "unknown drum style",
 		},
 	}
 

@@ -6,6 +6,7 @@ type File struct {
 	Tempo      int
 	Time       TimeSignature
 	Instrument *Instrument
+	Drums      *DrumInstrument
 	Sections   []Section
 }
 
@@ -29,6 +30,12 @@ type Instrument struct {
 	Type    GuitarType
 	Tuning  Tuning
 	Effects []Effect
+}
+
+// DrumInstrument describes drum kit configuration.
+type DrumInstrument struct {
+	Kit   string
+	Level float64
 }
 
 // Tuning can be a preset or an explicit set of string notes.
@@ -97,15 +104,18 @@ const (
 	EventNote      EventKind = "note"
 	EventChord     EventKind = "chord"
 	EventTechnique EventKind = "technique"
+	EventDrum      EventKind = "drum"
 )
 
 // Event is one timed musical event inside a bar.
 type Event struct {
 	Duration  Duration
+	Augmented bool
 	Kind      EventKind
 	Note      *Note
 	Chord     []Note
 	Technique *Technique
+	Drums     []DrumHit
 }
 
 // Note is a guitar string/fret location.
@@ -130,4 +140,39 @@ const (
 type Technique struct {
 	Kind       TechniqueKind
 	TargetFret *int
+}
+
+// DrumKind identifies a drum sound.
+type DrumKind string
+
+const (
+	DrumKick    DrumKind = "kick"
+	DrumSnare   DrumKind = "snare"
+	DrumHiHat   DrumKind = "hihat"
+	DrumRide    DrumKind = "ride"
+	DrumCrash   DrumKind = "crash"
+	DrumTom1    DrumKind = "tom1"
+	DrumTom2    DrumKind = "tom2"
+	DrumTom3    DrumKind = "tom3"
+	DrumClap    DrumKind = "clap"
+	DrumCowbell DrumKind = "cowbell"
+	DrumPerc    DrumKind = "perc"
+)
+
+// DrumStyle identifies a playing style for a drum hit.
+type DrumStyle string
+
+const (
+	DrumStyleClosed DrumStyle = "closed"
+	DrumStyleOpen   DrumStyle = "open"
+	DrumStyleRim    DrumStyle = "rim"
+	DrumStyleGhost  DrumStyle = "ghost"
+	DrumStyleFlam   DrumStyle = "flam"
+	DrumStyleAccent DrumStyle = "accent"
+)
+
+// DrumHit is one percussion hit.
+type DrumHit struct {
+	Kind  DrumKind
+	Style DrumStyle
 }

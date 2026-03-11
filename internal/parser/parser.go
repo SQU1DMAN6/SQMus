@@ -62,25 +62,50 @@ var durations = map[string]ast.Duration{
 	"t": ast.DurationThirtySecond,
 }
 
-var techniqueAliases = map[string]ast.TechniqueKind{
+var techniqueKinds = map[string]ast.TechniqueKind{
 	"hammer":   ast.TechniqueHammer,
-	"hm":       ast.TechniqueHammer,
 	"pull":     ast.TechniquePull,
-	"pl":       ast.TechniquePull,
 	"slide":    ast.TechniqueSlide,
-	"sl":       ast.TechniqueSlide,
 	"bend":     ast.TechniqueBend,
-	"bd":       ast.TechniqueBend,
 	"vibrato":  ast.TechniqueVibrato,
-	"vb":       ast.TechniqueVibrato,
 	"harmonic": ast.TechniqueHarmonic,
-	"hg":       ast.TechniqueHarmonic,
 }
 
 var techniquesRequireTarget = map[ast.TechniqueKind]struct{}{
 	ast.TechniqueHammer: {},
 	ast.TechniquePull:   {},
 	ast.TechniqueSlide:  {},
+}
+
+var drumKindMap = map[string]ast.DrumKind{
+	"k":    ast.DrumKick,
+	"sn":   ast.DrumSnare,
+	"s":    ast.DrumSnare,
+	"hh":   ast.DrumHiHat,
+	"rd":   ast.DrumRide,
+	"cr":   ast.DrumCrash,
+	"t1":   ast.DrumTom1,
+	"t2":   ast.DrumTom2,
+	"t3":   ast.DrumTom3,
+	"cl":   ast.DrumClap,
+	"cb":   ast.DrumCowbell,
+	"p":    ast.DrumPerc,
+	"perc": ast.DrumPerc,
+}
+
+var drumStyleMap = map[string]ast.DrumStyle{
+	"closed": ast.DrumStyleClosed,
+	"c":      ast.DrumStyleClosed,
+	"open":   ast.DrumStyleOpen,
+	"o":      ast.DrumStyleOpen,
+	"rim":    ast.DrumStyleRim,
+	"r":      ast.DrumStyleRim,
+	"ghost":  ast.DrumStyleGhost,
+	"g":      ast.DrumStyleGhost,
+	"flam":   ast.DrumStyleFlam,
+	"f":      ast.DrumStyleFlam,
+	"accent": ast.DrumStyleAccent,
+	"a":      ast.DrumStyleAccent,
 }
 
 // ParseError captures parser failures with source position.
@@ -148,6 +173,12 @@ func (p *parser) parseFile() (*ast.File, error) {
 		case lexer.TokenIdent:
 			if tok.Literal == "b" {
 				if err := p.parseBar(); err != nil {
+					return nil, err
+				}
+				break
+			}
+			if tok.Literal == "dr" {
+				if err := p.parseDrums(); err != nil {
 					return nil, err
 				}
 				break
@@ -297,6 +328,78 @@ func (p *parser) parseInstrument() error {
 	return nil
 }
 
+func (p *parser) parseDrums() error {
+	tok := p.advance()
+	if p.file.Drums != nil {
+		return p.errorf(tok, "only one drum block is supported")
+	}
+
+	drums := &ast.DrumInstrument{}
+	kitSeen := false
+	levelSeen := false
+
+	if _, err := p.expect(lexer.TokenLBrace, "expected '{' after dr"); err != nil {
+		return err
+	}
+
+	for {
+		p.skipNewlines()
+		if p.current().Type == lexer.TokenRBrace {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenEOF {
+			return p.errorf(p.current(), "unterminated drum block")
+		}
+
+		cmdTok := p.current()
+		if !isWordToken(cmdTok.Type) {
+			return p.errorf(cmdTok, "expected drum command")
+		}
+		cmd := cmdTok.Literal
+		p.advance()
+
+		switch cmd {
+		case "kit":
+			if kitSeen {
+				return p.errorf(cmdTok, "duplicate kit command")
+			}
+			parts, err := p.collectLineValues()
+			if err != nil {
+				return err
+			}
+			if len(parts) == 0 {
+				return p.errorf(cmdTok, "kit requires a value")
+			}
+			drums.Kit = parts[0]
+			kitSeen = true
+		case "lvl":
+			if levelSeen {
+				return p.errorf(cmdTok, "duplicate lvl command")
+			}
+			valueTok := p.current()
+			if valueTok.Type != lexer.TokenInt && valueTok.Type != lexer.TokenFloat {
+				return p.errorf(valueTok, "lvl must be numeric")
+			}
+			value, err := strconv.ParseFloat(valueTok.Literal, 64)
+			if err != nil {
+				return p.errorf(valueTok, "invalid lvl value")
+			}
+			p.advance()
+			if err := p.expectLineBoundary("lvl"); err != nil {
+				return err
+			}
+			drums.Level = value
+			levelSeen = true
+		default:
+			return p.errorf(cmdTok, "unknown drum command %q", cmd)
+		}
+	}
+
+	p.file.Drums = drums
+	return nil
+}
+
 func (p *parser) parseTuning(inst *ast.Instrument) error {
 	parts := make([]string, 0, 6)
 	for !p.atLineBoundary() {
@@ -437,16 +540,22 @@ func (p *parser) parseEvent() (ast.Event, error) {
 	}
 	p.advance()
 
+	augmented := false
+	if isWordToken(p.current().Type) && p.current().Literal == "aug" {
+		augmented = true
+		p.advance()
+	}
+
 	if _, err := p.expect(lexer.TokenColon, "expected ':' after duration"); err != nil {
 		return ast.Event{}, err
 	}
 
 	if p.current().Type == lexer.TokenLBracket {
-		chord, err := p.parseChord()
+		kind, chordNotes, chordDrums, err := p.parseChord()
 		if err != nil {
 			return ast.Event{}, err
 		}
-		event := ast.Event{Duration: dur, Kind: ast.EventChord, Chord: chord}
+		event := ast.Event{Duration: dur, Augmented: augmented, Kind: kind, Chord: chordNotes, Drums: chordDrums}
 		if err := p.expectEventBoundary(); err != nil {
 			return ast.Event{}, err
 		}
@@ -455,7 +564,19 @@ func (p *parser) parseEvent() (ast.Event, error) {
 
 	if isWordToken(p.current().Type) && p.current().Literal == "n" {
 		p.advance()
-		event := ast.Event{Duration: dur, Kind: ast.EventRest}
+		event := ast.Event{Duration: dur, Augmented: augmented, Kind: ast.EventRest}
+		if err := p.expectEventBoundary(); err != nil {
+			return ast.Event{}, err
+		}
+		return event, nil
+	}
+
+	if isWordToken(p.current().Type) && strings.HasPrefix(p.current().Literal, "d") {
+		hit, err := p.parseDrumHit()
+		if err != nil {
+			return ast.Event{}, err
+		}
+		event := ast.Event{Duration: dur, Augmented: augmented, Kind: ast.EventDrum, Drums: []ast.DrumHit{hit}}
 		if err := p.expectEventBoundary(); err != nil {
 			return ast.Event{}, err
 		}
@@ -467,9 +588,9 @@ func (p *parser) parseEvent() (ast.Event, error) {
 		return ast.Event{}, err
 	}
 
-	event := ast.Event{Duration: dur, Kind: ast.EventNote, Note: &note}
+	event := ast.Event{Duration: dur, Augmented: augmented, Kind: ast.EventNote, Note: &note}
 	if isWordToken(p.current().Type) {
-		if isTechniqueToken(p.current().Literal) {
+		if _, ok := techniqueKinds[p.current().Literal]; ok {
 			tech, err := p.parseTechnique()
 			if err != nil {
 				return ast.Event{}, err
@@ -485,27 +606,50 @@ func (p *parser) parseEvent() (ast.Event, error) {
 	return event, nil
 }
 
-func (p *parser) parseChord() ([]ast.Note, error) {
+func (p *parser) parseChord() (ast.EventKind, []ast.Note, []ast.DrumHit, error) {
 	if _, err := p.expect(lexer.TokenLBracket, "expected '[' to start chord"); err != nil {
-		return nil, err
+		return "", nil, nil, err
+	}
+
+	if p.current().Type == lexer.TokenRBracket {
+		return "", nil, nil, p.errorf(p.current(), "chord cannot be empty")
+	}
+
+	if isWordToken(p.current().Type) && strings.HasPrefix(p.current().Literal, "d") {
+		drums := make([]ast.DrumHit, 0, 4)
+		for {
+			if p.current().Type == lexer.TokenRBracket {
+				p.advance()
+				return ast.EventDrum, nil, drums, nil
+			}
+			if p.current().Type == lexer.TokenEOF || p.current().Type == lexer.TokenNewline {
+				return "", nil, nil, p.errorf(p.current(), "unterminated drum chord")
+			}
+
+			hit, err := p.parseDrumHit()
+			if err != nil {
+				return "", nil, nil, err
+			}
+			drums = append(drums, hit)
+		}
 	}
 
 	notes := make([]ast.Note, 0, 4)
 	for {
 		if p.current().Type == lexer.TokenRBracket {
 			if len(notes) == 0 {
-				return nil, p.errorf(p.current(), "chord cannot be empty")
+				return "", nil, nil, p.errorf(p.current(), "chord cannot be empty")
 			}
 			p.advance()
-			return notes, nil
+			return ast.EventChord, notes, nil, nil
 		}
 		if p.current().Type == lexer.TokenEOF || p.current().Type == lexer.TokenNewline {
-			return nil, p.errorf(p.current(), "unterminated chord")
+			return "", nil, nil, p.errorf(p.current(), "unterminated chord")
 		}
 
 		note, err := p.parseNote()
 		if err != nil {
-			return nil, err
+			return "", nil, nil, err
 		}
 		notes = append(notes, note)
 	}
@@ -542,28 +686,46 @@ func (p *parser) parseNote() (ast.Note, error) {
 	return ast.Note{String: stringNum, Fret: fret}, nil
 }
 
-func (p *parser) parseTechnique() (ast.Technique, error) {
-	techTok := p.current()
-	alias := techTok.Literal
-	if !isTechniqueToken(alias) {
-		return ast.Technique{}, p.errorf(techTok, "unknown technique %q", alias)
+func (p *parser) parseDrumHit() (ast.DrumHit, error) {
+	tok := p.current()
+	if !isWordToken(tok.Type) {
+		return ast.DrumHit{}, p.errorf(tok, "expected drum hit")
+	}
+	if !strings.HasPrefix(tok.Literal, "d") || len(tok.Literal) < 2 {
+		return ast.DrumHit{}, p.errorf(tok, "invalid drum hit %q", tok.Literal)
+	}
+	code := tok.Literal[1:]
+	kind, ok := drumKindMap[code]
+	if !ok {
+		return ast.DrumHit{}, p.errorf(tok, "unknown drum hit %q", tok.Literal)
 	}
 	p.advance()
 
-	usesToKeyword := false
-	hasExplicitTarget := false
-	if isWordToken(p.current().Type) && p.current().Literal == "to" {
-		usesToKeyword = true
-		hasExplicitTarget = true
+	style := ast.DrumStyle("")
+	if p.current().Type == lexer.TokenComma {
 		p.advance()
-	} else if p.current().Type == lexer.TokenInt {
-		hasExplicitTarget = true
+		styleTok := p.current()
+		if !isWordToken(styleTok.Type) {
+			return ast.DrumHit{}, p.errorf(styleTok, "expected drum style after ','")
+		}
+		if mapped, ok := drumStyleMap[strings.ToLower(styleTok.Literal)]; ok {
+			style = mapped
+		} else {
+			return ast.DrumHit{}, p.errorf(styleTok, "unknown drum style %q", styleTok.Literal)
+		}
+		p.advance()
 	}
 
-	kind, ok := resolveTechniqueAlias(alias, hasExplicitTarget)
+	return ast.DrumHit{Kind: kind, Style: style}, nil
+}
+
+func (p *parser) parseTechnique() (ast.Technique, error) {
+	techTok := p.current()
+	kind, ok := techniqueKinds[techTok.Literal]
 	if !ok {
-		return ast.Technique{}, p.errorf(techTok, "unknown technique %q", alias)
+		return ast.Technique{}, p.errorf(techTok, "unknown technique %q", techTok.Literal)
 	}
+	p.advance()
 
 	tech := ast.Technique{Kind: kind}
 	_, requiresTarget := techniquesRequireTarget[kind]
@@ -581,9 +743,6 @@ func (p *parser) parseTechnique() (ast.Technique, error) {
 		return tech, nil
 	}
 
-	if usesToKeyword {
-		return ast.Technique{}, p.errorf(p.current(), "technique %q does not accept a target fret", kind)
-	}
 	if p.current().Type == lexer.TokenInt || p.current().Type == lexer.TokenFloat {
 		return ast.Technique{}, p.errorf(p.current(), "technique %q does not accept a target fret", kind)
 	}
@@ -674,27 +833,4 @@ func isWordToken(tt lexer.TokenType) bool {
 
 func isValueToken(tt lexer.TokenType) bool {
 	return isWordToken(tt) || tt == lexer.TokenInt || tt == lexer.TokenFloat
-}
-
-func isTechniqueToken(lit string) bool {
-	_, ok := techniqueAliases[lit]
-	return ok
-}
-
-func resolveTechniqueAlias(alias string, hasTarget bool) (ast.TechniqueKind, bool) {
-	kind, ok := techniqueAliases[alias]
-	if !ok {
-		return "", false
-	}
-
-	// "hm" is accepted as both hammer and harmonic:
-	// with a target fret => hammer, otherwise => harmonic.
-	if alias == "hm" {
-		if hasTarget {
-			return ast.TechniqueHammer, true
-		}
-		return ast.TechniqueHarmonic, true
-	}
-
-	return kind, true
 }

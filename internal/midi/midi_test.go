@@ -39,6 +39,9 @@ func TestEncodeAndWriteFile(t *testing.T) {
 	if !bytes.Contains(data, []byte{0xB0, 101, 0}) {
 		t.Fatalf("expected pitch-bend range configuration events")
 	}
+	if !bytes.Contains(data, []byte{0x99}) {
+		t.Fatalf("expected drum channel note events")
+	}
 
 	outPath := filepath.Join(t.TempDir(), "test.mid")
 	if err := WriteFile(score, outPath); err != nil {

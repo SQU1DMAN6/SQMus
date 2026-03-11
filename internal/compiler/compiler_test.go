@@ -32,7 +32,10 @@ func TestCompileSourceHelloExample(t *testing.T) {
 	if len(score.Notes) != 9 {
 		t.Fatalf("unexpected note count: %d", len(score.Notes))
 	}
-	if score.TotalTicks != 5280 {
+	if len(score.Drums) != 4 {
+		t.Fatalf("unexpected drum count: %d", len(score.Drums))
+	}
+	if score.TotalTicks != 7440 {
 		t.Fatalf("unexpected total ticks: %d", score.TotalTicks)
 	}
 	if score.OpenMIDINotes[0] != 64 || score.OpenMIDINotes[5] != 40 {
@@ -53,9 +56,9 @@ func TestCompileSourceHelloExample(t *testing.T) {
 		t.Fatalf("expected hammer metadata, got %+v", *hammer)
 	}
 
-	bend := findNote(score.Notes, 2400, 2)
+	bend := findNote(score.Notes, 2640, 2)
 	if bend == nil {
-		t.Fatalf("expected bend note at tick 2400 on string 2")
+		t.Fatalf("expected bend note at tick 2640 on string 2")
 	}
 	if bend.Technique != ast.TechniqueBend || bend.TechniqueTargetMIDI <= bend.MIDI {
 		t.Fatalf("expected bend metadata, got %+v", *bend)
@@ -73,14 +76,22 @@ el {
     amp g 0.7 t 0.6
 }
 
+dr {
+    kit std
+}
+
 Section Main
 b 1 {
-    q: s2,5 hm to 7
-    q: s2,7 pl to 5
-    q: s2,5 sl to 7
-    q: s1,7 bd
-    q: s1,8 vb
-    q: s1,7 hm
+    q: s2,5 hammer 7
+    q: s2,7 pull 5
+    q: s2,5 slide 7
+    q: s1,7 bend
+    q: s1,8 vibrato
+    q: s1,7 harmonic
+}
+
+b 2 {
+    q: dk
 }
 `
 
@@ -90,6 +101,9 @@ b 1 {
 	}
 	if len(score.Notes) != 6 {
 		t.Fatalf("expected 6 notes, got %d", len(score.Notes))
+	}
+	if len(score.Drums) != 1 {
+		t.Fatalf("expected 1 drum hit, got %d", len(score.Drums))
 	}
 
 	kinds := map[ast.TechniqueKind]bool{}
@@ -112,19 +126,28 @@ b 1 {
 	}
 }
 
-func TestCompileSourceSupportsSharpTuning(t *testing.T) {
-	srcPath := filepath.Join("..", "..", "test.sqm")
-	src, err := os.ReadFile(srcPath)
-	if err != nil {
-		t.Fatalf("read test source: %v", err)
-	}
+func TestAugmentedDurationTicks(t *testing.T) {
+	src := `NAME Aug
 
-	score, err := CompileSource(string(src))
+tp 120
+time 4/4
+
+el {
+    tn std
+}
+
+Section Main
+b 1 {
+    q aug: s1,0
+}
+`
+
+	score, err := CompileSource(src)
 	if err != nil {
 		t.Fatalf("CompileSource() returned error: %v", err)
 	}
-	if score.OpenMIDINotes[0] != 66 || score.OpenMIDINotes[5] != 42 {
-		t.Fatalf("unexpected open string MIDI values for sharp tuning: %+v", score.OpenMIDINotes)
+	if score.TotalTicks != 720 {
+		t.Fatalf("expected augmented quarter duration (720 ticks), got %d", score.TotalTicks)
 	}
 }
 

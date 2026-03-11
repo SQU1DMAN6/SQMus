@@ -72,9 +72,11 @@ type Score struct {
 	PPQ            int
 	InstrumentType ast.GuitarType
 	Config         GuitarConfig
+	DrumConfig     DrumConfig
 	StringNames    [6]string // string 1..6 (high to low)
 	OpenMIDINotes  [6]int    // string 1..6 (high to low)
 	Notes          []NoteEvent
+	Drums          []DrumEvent
 	TotalTicks     int
 }
 
@@ -101,6 +103,12 @@ type GuitarConfig struct {
 	NoiseLevel     float64
 }
 
+// DrumConfig stores drum kit settings.
+type DrumConfig struct {
+	Kit   string
+	Level float64
+}
+
 // NoteEvent is one resolved musical note in timeline order.
 type NoteEvent struct {
 	StartTicks          int
@@ -111,6 +119,17 @@ type NoteEvent struct {
 	Fret                int
 	Technique           ast.TechniqueKind
 	TechniqueTargetMIDI int
+	Augmented           bool
+}
+
+// DrumEvent is one resolved drum hit in timeline order.
+type DrumEvent struct {
+	StartTicks    int
+	DurationTicks int
+	Kind          ast.DrumKind
+	Style         ast.DrumStyle
+	Velocity      uint8
+	Augmented     bool
 }
 
 // CompileSource parses and compiles SQMus source into a score.
@@ -147,6 +166,7 @@ func CompileAST(file *ast.File) (*Score, error) {
 	if err != nil {
 		return nil, err
 	}
+	drumCfg := resolveDrums(file.Drums)
 
 	score := &Score{
 		Name:           file.Name,
@@ -155,9 +175,11 @@ func CompileAST(file *ast.File) (*Score, error) {
 		PPQ:            defaultPPQ,
 		InstrumentType: guitarType,
 		Config:         cfg,
+		DrumConfig:     drumCfg,
 		StringNames:    stringNames,
 		OpenMIDINotes:  openMIDINotes,
 		Notes:          make([]NoteEvent, 0, 64),
+		Drums:          make([]DrumEvent, 0, 32),
 	}
 
 	tick := 0
@@ -168,13 +190,16 @@ func CompileAST(file *ast.File) (*Score, error) {
 				if !ok {
 					return nil, fmt.Errorf("unsupported duration %q", event.Duration)
 				}
+				if event.Augmented {
+					dur += dur / 2
+				}
 
 				switch event.Kind {
 				case ast.EventRest:
 					// Nothing to emit.
 				case ast.EventChord:
 					for _, note := range event.Chord {
-						noteEvent, err := emitNoteEvent(note, tick, dur, openMIDINotes, nil)
+						noteEvent, err := emitNoteEvent(note, tick, dur, openMIDINotes, nil, event.Augmented)
 						if err != nil {
 							return nil, err
 						}
@@ -184,7 +209,7 @@ func CompileAST(file *ast.File) (*Score, error) {
 					if event.Note == nil {
 						return nil, fmt.Errorf("note event is missing note payload")
 					}
-					noteEvent, err := emitNoteEvent(*event.Note, tick, dur, openMIDINotes, nil)
+					noteEvent, err := emitNoteEvent(*event.Note, tick, dur, openMIDINotes, nil, event.Augmented)
 					if err != nil {
 						return nil, err
 					}
@@ -193,11 +218,26 @@ func CompileAST(file *ast.File) (*Score, error) {
 					if event.Note == nil || event.Technique == nil {
 						return nil, fmt.Errorf("technique event is missing payload")
 					}
-					noteEvent, err := emitNoteEvent(*event.Note, tick, dur, openMIDINotes, event.Technique)
+					noteEvent, err := emitNoteEvent(*event.Note, tick, dur, openMIDINotes, event.Technique, event.Augmented)
 					if err != nil {
 						return nil, err
 					}
 					score.Notes = append(score.Notes, noteEvent)
+				case ast.EventDrum:
+					if len(event.Drums) == 0 {
+						return nil, fmt.Errorf("drum event is missing hits")
+					}
+					for _, hit := range event.Drums {
+						drumEvent := DrumEvent{
+							StartTicks:    tick,
+							DurationTicks: dur,
+							Kind:          hit.Kind,
+							Style:         hit.Style,
+							Velocity:      drumVelocity(hit.Style),
+							Augmented:     event.Augmented,
+						}
+						score.Drums = append(score.Drums, drumEvent)
+					}
 				default:
 					return nil, fmt.Errorf("unsupported event kind %q", event.Kind)
 				}
@@ -217,11 +257,18 @@ func CompileAST(file *ast.File) (*Score, error) {
 		return score.Notes[i].MIDI < score.Notes[j].MIDI
 	})
 
+	sort.Slice(score.Drums, func(i, j int) bool {
+		if score.Drums[i].StartTicks != score.Drums[j].StartTicks {
+			return score.Drums[i].StartTicks < score.Drums[j].StartTicks
+		}
+		return score.Drums[i].Kind < score.Drums[j].Kind
+	})
+
 	score.TotalTicks = tick
 	return score, nil
 }
 
-func emitNoteEvent(note ast.Note, startTicks, durationTicks int, openMIDINotes [6]int, technique *ast.Technique) (NoteEvent, error) {
+func emitNoteEvent(note ast.Note, startTicks, durationTicks int, openMIDINotes [6]int, technique *ast.Technique, augmented bool) (NoteEvent, error) {
 	if note.String < 1 || note.String > 6 {
 		return NoteEvent{}, fmt.Errorf("invalid string number %d", note.String)
 	}
@@ -279,6 +326,7 @@ func emitNoteEvent(note ast.Note, startTicks, durationTicks int, openMIDINotes [
 		Fret:                note.Fret,
 		Technique:           techKind,
 		TechniqueTargetMIDI: targetMIDI,
+		Augmented:           augmented,
 	}, nil
 }
 
@@ -322,6 +370,20 @@ func resolveInstrument(inst *ast.Instrument) ([6]string, [6]int, ast.GuitarType,
 		names[0] = "e"
 	}
 	return names, open, guitarType, cfg, nil
+}
+
+func resolveDrums(drums *ast.DrumInstrument) DrumConfig {
+	cfg := DrumConfig{Kit: "std", Level: 0.85}
+	if drums == nil {
+		return cfg
+	}
+	if strings.TrimSpace(drums.Kit) != "" {
+		cfg.Kit = strings.TrimSpace(drums.Kit)
+	}
+	if drums.Level > 0 {
+		cfg.Level = clamp01(drums.Level)
+	}
+	return cfg
 }
 
 func defaultGuitarConfig(guitarType ast.GuitarType) GuitarConfig {
@@ -452,6 +514,21 @@ func applyEffects(cfg *GuitarConfig, effects []ast.Effect) {
 				cfg.NoiseLevel = clamp01(v)
 			}
 		}
+	}
+}
+
+func drumVelocity(style ast.DrumStyle) uint8 {
+	switch style {
+	case ast.DrumStyleGhost:
+		return 60
+	case ast.DrumStyleRim:
+		return 92
+	case ast.DrumStyleFlam:
+		return 105
+	case ast.DrumStyleAccent:
+		return 118
+	default:
+		return 96
 	}
 }
 
